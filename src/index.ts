@@ -4,6 +4,7 @@ import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { registerPlayerTools } from "./tools/player.js";
 import { registerFactionTools } from "./tools/faction.js";
 import { registerMarketTools } from "./tools/market.js";
@@ -47,22 +48,57 @@ async function main() {
     const app = express();
     app.use(express.json());
 
-    // Track active transports by session ID
-    const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
+    // ── Streamable HTTP transport (modern clients) ──
+    const streamableSessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
+
+    // ── SSE transport (legacy clients like Nexus) ──
+    const sseSessions = new Map<string, { transport: SSEServerTransport; server: McpServer }>();
 
     // Health check for Railway
     app.get("/health", (_req, res) => {
       res.json({ status: "ok", tools: 54 });
     });
 
-    // Handle MCP requests (POST for requests, GET for SSE stream, DELETE for session close)
+    // ── Legacy SSE endpoints ──
+
+    // GET /sse — client connects here to establish SSE stream
+    app.get("/sse", async (req, res) => {
+      console.log("New SSE connection");
+      const transport = new SSEServerTransport("/messages", res);
+      const server = createServer(apiKey!);
+
+      await server.connect(transport);
+
+      const sid = transport.sessionId;
+      sseSessions.set(sid, { transport, server });
+      console.log(`SSE session created: ${sid}`);
+
+      transport.onclose = () => {
+        console.log(`SSE session closed: ${sid}`);
+        sseSessions.delete(sid);
+      };
+    });
+
+    // POST /messages — client sends JSON-RPC messages here
+    app.post("/messages", async (req, res) => {
+      const sessionId = req.query.sessionId as string;
+      if (!sessionId || !sseSessions.has(sessionId)) {
+        res.status(400).json({ error: "Invalid or missing session ID" });
+        return;
+      }
+      const session = sseSessions.get(sessionId)!;
+      await session.transport.handlePostMessage(req, res, req.body);
+    });
+
+    // ── Streamable HTTP endpoint (modern clients) ──
+
     app.all("/mcp", async (req, res) => {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
       if (req.method === "POST") {
         // Check for existing session
-        if (sessionId && sessions.has(sessionId)) {
-          const session = sessions.get(sessionId)!;
+        if (sessionId && streamableSessions.has(sessionId)) {
+          const session = streamableSessions.get(sessionId)!;
           await session.transport.handleRequest(req, res, req.body);
           return;
         }
@@ -78,7 +114,7 @@ async function main() {
         // Store session once initialized
         transport.onclose = () => {
           const sid = (transport as any).sessionId;
-          if (sid) sessions.delete(sid);
+          if (sid) streamableSessions.delete(sid);
         };
 
         // Handle the request — this will generate the session ID
@@ -87,22 +123,22 @@ async function main() {
         // Store the session using the generated ID
         const sid = (transport as any).sessionId;
         if (sid) {
-          sessions.set(sid, { transport, server });
+          streamableSessions.set(sid, { transport, server });
         }
       } else if (req.method === "GET") {
         // SSE stream for notifications
-        if (!sessionId || !sessions.has(sessionId)) {
+        if (!sessionId || !streamableSessions.has(sessionId)) {
           res.status(400).json({ error: "Invalid or missing session ID" });
           return;
         }
-        const session = sessions.get(sessionId)!;
+        const session = streamableSessions.get(sessionId)!;
         await session.transport.handleRequest(req, res);
       } else if (req.method === "DELETE") {
         // Session close
-        if (sessionId && sessions.has(sessionId)) {
-          const session = sessions.get(sessionId)!;
+        if (sessionId && streamableSessions.has(sessionId)) {
+          const session = streamableSessions.get(sessionId)!;
           await session.transport.handleRequest(req, res);
-          sessions.delete(sessionId);
+          streamableSessions.delete(sessionId);
         } else {
           res.status(400).json({ error: "Invalid or missing session ID" });
         }
@@ -113,7 +149,9 @@ async function main() {
 
     const port = parseInt(process.env.PORT || "3000", 10);
     app.listen(port, "0.0.0.0", () => {
-      console.log(`Torn MCP server running on http://0.0.0.0:${port}/mcp`);
+      console.log(`Torn MCP server running on http://0.0.0.0:${port}`);
+      console.log(`  Streamable HTTP: /mcp`);
+      console.log(`  Legacy SSE:      /sse + /messages`);
     });
   }
 }
