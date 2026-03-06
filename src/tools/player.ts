@@ -107,10 +107,10 @@ export function registerPlayerTools(server: McpServer, apiKey: string) {
 
   server.tool(
     "get_player_personal_stats",
-    "Get your personal stats (xanax used, attacks won, etc).",
-    {},
-    async () => {
-      const data = await tornUser(apiKey, "personalstats");
+    "Get personal stats for yourself or another player (xanax used, attacks won, etc.). Leave playerId empty for yourself. Note: querying other players returns only publicly visible stats.",
+    { playerId: z.string().optional().describe("Player ID (omit for yourself)") },
+    async ({ playerId }) => {
+      const data = await tornUser(apiKey, "personalstats", playerId);
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     }
   );
