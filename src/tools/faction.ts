@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { tornFaction } from "../torn-api.js";
+import { tornFaction, tornFactionV2, tornUserV2 } from "../torn-api.js";
 
 export function registerFactionTools(server: McpServer, apiKey: string) {
   server.tool(
@@ -160,6 +160,33 @@ export function registerFactionTools(server: McpServer, apiKey: string) {
     async ({ newsType, limit }) => {
       const extra = limit ? { limit } : undefined;
       const data = await tornFaction(apiKey, newsType, undefined, extra);
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    }
+  );
+
+  // ── OC 2.0 tools (v2 API) ──
+
+  server.tool(
+    "get_faction_crimes_v2",
+    "Get OC 2.0 organized crime data for the faction. Use cat='planning' for active/recruiting OCs (scenario names, roles, member assignments, CPR, materials). Use cat='completed' for finished OCs (success/failure, rewards, participants). Requires faction API access.",
+    {
+      cat: z.enum(["planning", "completed"]).describe("Category: 'planning' for active OCs, 'completed' for finished OCs"),
+      offset: z.string().optional().describe("Pagination offset (default 0)"),
+    },
+    async ({ cat, offset }) => {
+      const params: Record<string, string> = { cat };
+      if (offset) params.offset = offset;
+      const data = await tornFactionV2(apiKey, "crimes", params);
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "get_user_organized_crimes_v2",
+    "Get OC 2.0 scenarios with Recruiting status and empty slots available to join. Uses v2 user endpoint with Minimal access key.",
+    {},
+    async () => {
+      const data = await tornUserV2(apiKey, "organizedcrimes");
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     }
   );

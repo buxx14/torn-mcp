@@ -76,3 +76,40 @@ export const tornTorn = (apiKey: string, selections: string, id?: string | numbe
 
 export const tornKey = (apiKey: string, selections: string) =>
   tornApiCall(apiKey, "key", selections);
+
+// ── Torn API v2 ──
+
+const BASE_URL_V2 = "https://api.torn.com/v2";
+
+export async function tornApiV2Call(
+  apiKey: string,
+  path: string,
+  params?: Record<string, string>
+): Promise<TornApiResponse> {
+  await rateLimit();
+
+  const url = new URL(`${BASE_URL_V2}/${path}`);
+  url.searchParams.set("key", apiKey);
+
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, value);
+    }
+  }
+
+  const response = await fetch(url.toString());
+  const data = (await response.json()) as TornApiResponse;
+
+  if (data.error) {
+    const err = data.error as TornApiError;
+    throw new Error(`Torn API v2 Error (code ${err.code}): ${err.error}`);
+  }
+
+  return data;
+}
+
+export const tornFactionV2 = (apiKey: string, endpoint: string, params?: Record<string, string>) =>
+  tornApiV2Call(apiKey, `faction/${endpoint}`, params);
+
+export const tornUserV2 = (apiKey: string, selections: string, params?: Record<string, string>) =>
+  tornApiV2Call(apiKey, "user", { selections, ...params });

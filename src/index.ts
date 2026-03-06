@@ -10,8 +10,10 @@ import { registerFactionTools } from "./tools/faction.js";
 import { registerMarketTools } from "./tools/market.js";
 import { registerYataTools } from "./tools/yata.js";
 import { registerTornTools } from "./tools/torn.js";
+import { registerTornStatsTools } from "./tools/tornstats.js";
 
 const apiKey = process.env.TORN_API_KEY;
+const tornStatsKey = process.env.TORNSTATS_API_KEY;
 
 if (!apiKey) {
   console.error("ERROR: TORN_API_KEY environment variable is required.");
@@ -31,6 +33,9 @@ function createServer(key: string): McpServer {
   registerMarketTools(server, key);
   registerYataTools(server, key);
   registerTornTools(server, key);
+  if (tornStatsKey) {
+    registerTornStatsTools(server, tornStatsKey);
+  }
 
   return server;
 }
@@ -56,7 +61,7 @@ async function main() {
 
     // Health check for Railway
     app.get("/health", (_req, res) => {
-      res.json({ status: "ok", tools: 54 });
+      res.json({ status: "ok", tools: 57 });
     });
 
     // ── Legacy SSE endpoints ──
