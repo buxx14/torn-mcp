@@ -1,22 +1,7 @@
-const BASE_URL = "https://api.torn.com";
+import { KeyManager } from "./key-manager.js";
 
-// Simple rate limiter: max 90 requests per 60 seconds (leaving headroom under 100/min limit)
-const REQUEST_WINDOW = 60_000;
-const MAX_REQUESTS = 90;
-const requestTimestamps: number[] = [];
-
-async function rateLimit(): Promise<void> {
-  const now = Date.now();
-  // Remove timestamps older than the window
-  while (requestTimestamps.length > 0 && requestTimestamps[0] < now - REQUEST_WINDOW) {
-    requestTimestamps.shift();
-  }
-  if (requestTimestamps.length >= MAX_REQUESTS) {
-    const waitTime = requestTimestamps[0] + REQUEST_WINDOW - now + 100;
-    await new Promise((resolve) => setTimeout(resolve, waitTime));
-  }
-  requestTimestamps.push(Date.now());
-}
+const BASE_URL_V2 = "https://api.torn.com/v2";
+const BASE_URL_V1 = "https://api.torn.com";
 
 export interface TornApiError {
   code: number;
@@ -27,73 +12,21 @@ export interface TornApiResponse {
   [key: string]: any;
 }
 
-export async function tornApiCall(
-  apiKey: string,
-  section: string,
-  selections: string,
-  id?: string | number,
-  extraParams?: Record<string, string>
-): Promise<TornApiResponse> {
-  await rateLimit();
+// ── v2 API (primary) ──
 
-  const idPart = id ? `/${id}` : "";
-  const url = new URL(`${BASE_URL}/${section}${idPart}`);
-  url.searchParams.set("selections", selections);
-  url.searchParams.set("key", apiKey);
-
-  if (extraParams) {
-    for (const [key, value] of Object.entries(extraParams)) {
-      url.searchParams.set(key, value);
-    }
-  }
-
-  const response = await fetch(url.toString());
-  const data = (await response.json()) as TornApiResponse;
-
-  if (data.error) {
-    const err = data.error as TornApiError;
-    throw new Error(`Torn API Error (code ${err.code}): ${err.error}`);
-  }
-
-  return data;
-}
-
-// Convenience wrappers for each section
-export const tornUser = (apiKey: string, selections: string, userId?: string | number, extra?: Record<string, string>) =>
-  tornApiCall(apiKey, "user", selections, userId, extra);
-
-export const tornFaction = (apiKey: string, selections: string, factionId?: string | number, extra?: Record<string, string>) =>
-  tornApiCall(apiKey, "faction", selections, factionId, extra);
-
-export const tornCompany = (apiKey: string, selections: string, companyId?: string | number, extra?: Record<string, string>) =>
-  tornApiCall(apiKey, "company", selections, companyId, extra);
-
-export const tornMarket = (apiKey: string, selections: string, itemId?: string | number, extra?: Record<string, string>) =>
-  tornApiCall(apiKey, "market", selections, itemId, extra);
-
-export const tornTorn = (apiKey: string, selections: string, id?: string | number, extra?: Record<string, string>) =>
-  tornApiCall(apiKey, "torn", selections, id, extra);
-
-export const tornKey = (apiKey: string, selections: string) =>
-  tornApiCall(apiKey, "key", selections);
-
-// ── Torn API v2 ──
-
-const BASE_URL_V2 = "https://api.torn.com/v2";
-
-export async function tornApiV2Call(
-  apiKey: string,
+export async function tornApiFetch(
+  keyManager: KeyManager,
   path: string,
-  params?: Record<string, string>
+  params?: Record<string, string | number | undefined>
 ): Promise<TornApiResponse> {
-  await rateLimit();
-
-  const url = new URL(`${BASE_URL_V2}/${path}`);
-  url.searchParams.set("key", apiKey);
+  const key = await keyManager.getKey();
+  const url = new URL(`${BASE_URL_V2}${path}`);
+  url.searchParams.set("key", key);
+  url.searchParams.set("comment", "NEXUS-MCP");
 
   if (params) {
-    for (const [key, value] of Object.entries(params)) {
-      url.searchParams.set(key, value);
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     }
   }
 
@@ -102,14 +35,90 @@ export async function tornApiV2Call(
 
   if (data.error) {
     const err = data.error as TornApiError;
+
+    // Rate limited — wait 31s and retry once
+    if (err.code === 5) {
+      await new Promise((r) => setTimeout(r, 31000));
+      const retryKey = await keyManager.getKey();
+      url.searchParams.set("key", retryKey);
+      const retryRes = await fetch(url.toString());
+      const retryData = (await retryRes.json()) as TornApiResponse;
+      if (retryData.error) {
+        const retryErr = retryData.error as TornApiError;
+        throw new Error(`Torn API v2 Error (code ${retryErr.code}): ${retryErr.error}`);
+      }
+      return retryData;
+    }
+
+    // Cloud daily limit
+    if (err.code === 14) {
+      throw new Error("Cloud daily limit reached (50K rows). Try again tomorrow or use fewer stats.");
+    }
+
     throw new Error(`Torn API v2 Error (code ${err.code}): ${err.error}`);
   }
 
   return data;
 }
 
-export const tornFactionV2 = (apiKey: string, endpoint: string, params?: Record<string, string>) =>
-  tornApiV2Call(apiKey, `faction/${endpoint}`, params);
+// ── v1 API (legacy, for endpoints not yet on v2) ──
 
-export const tornUserV2 = (apiKey: string, selections: string, params?: Record<string, string>) =>
-  tornApiV2Call(apiKey, "user", { selections, ...params });
+export async function tornApiV1Call(
+  keyManager: KeyManager,
+  section: string,
+  selections: string,
+  id?: string | number,
+  extraParams?: Record<string, string>
+): Promise<TornApiResponse> {
+  const key = await keyManager.getKey();
+  const idPart = id ? `/${id}` : "";
+  const url = new URL(`${BASE_URL_V1}/${section}${idPart}`);
+  url.searchParams.set("selections", selections);
+  url.searchParams.set("key", key);
+  url.searchParams.set("comment", "NEXUS-MCP");
+
+  if (extraParams) {
+    for (const [k, v] of Object.entries(extraParams)) {
+      url.searchParams.set(k, v);
+    }
+  }
+
+  const response = await fetch(url.toString());
+  const data = (await response.json()) as TornApiResponse;
+
+  if (data.error) {
+    const err = data.error as TornApiError;
+
+    if (err.code === 5) {
+      await new Promise((r) => setTimeout(r, 31000));
+      const retryKey = await keyManager.getKey();
+      url.searchParams.set("key", retryKey);
+      const retryRes = await fetch(url.toString());
+      const retryData = (await retryRes.json()) as TornApiResponse;
+      if (retryData.error) {
+        const retryErr = retryData.error as TornApiError;
+        throw new Error(`Torn API Error (code ${retryErr.code}): ${retryErr.error}`);
+      }
+      return retryData;
+    }
+
+    if (err.code === 14) {
+      throw new Error("Cloud daily limit reached (50K rows). Try again tomorrow or use fewer stats.");
+    }
+
+    throw new Error(`Torn API Error (code ${err.code}): ${err.error}`);
+  }
+
+  return data;
+}
+
+// ── Convenience wrappers ──
+
+export const tornUser = (km: KeyManager, selections: string, userId?: string | number, extra?: Record<string, string>) =>
+  tornApiV1Call(km, "user", selections, userId, extra);
+
+export const tornFaction = (km: KeyManager, selections: string, factionId?: string | number, extra?: Record<string, string>) =>
+  tornApiV1Call(km, "faction", selections, factionId, extra);
+
+export const tornTorn = (km: KeyManager, selections: string, id?: string | number, extra?: Record<string, string>) =>
+  tornApiV1Call(km, "torn", selections, id, extra);

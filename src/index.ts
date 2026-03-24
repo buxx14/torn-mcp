@@ -5,9 +5,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { KeyManager } from "./key-manager.js";
 import { registerPlayerTools } from "./tools/player.js";
 import { registerFactionTools } from "./tools/faction.js";
-import { registerMarketTools } from "./tools/market.js";
+import { registerWarTools } from "./tools/war.js";
 import { registerYataTools } from "./tools/yata.js";
 import { registerTornTools } from "./tools/torn.js";
 import { registerTornStatsTools } from "./tools/tornstats.js";
@@ -21,18 +22,24 @@ if (!apiKey) {
   process.exit(1);
 }
 
-function createServer(key: string): McpServer {
+const keyManager = new KeyManager(
+  [process.env.TORN_API_KEY, process.env.TORN_API_KEY_2, process.env.TORN_API_KEY_3].filter(Boolean) as string[]
+);
+
+console.log(`KeyManager initialized with ${keyManager.keyCount} API key(s)`);
+
+function createServer(): McpServer {
   const server = new McpServer({
     name: "torn-mcp",
-    version: "1.0.0",
-    description: "MCP server for Torn.com - access player data, faction info, market data, and YATA tools",
+    version: "2.0.0",
+    description: "MCP server for Torn.com — Delta Engine with historical stats, faction sweeps, war reports",
   });
 
-  registerPlayerTools(server, key);
-  registerFactionTools(server, key);
-  registerMarketTools(server, key);
-  registerYataTools(server, key);
-  registerTornTools(server, key);
+  registerPlayerTools(server, keyManager);
+  registerFactionTools(server, keyManager);
+  registerWarTools(server, keyManager, tornStatsKey);
+  registerYataTools(server, apiKey!);
+  registerTornTools(server, keyManager);
   if (tornStatsKey) {
     registerTornStatsTools(server, tornStatsKey);
   }
@@ -45,10 +52,10 @@ const mode = process.env.PORT ? "http" : "stdio";
 
 async function main() {
   if (mode === "stdio") {
-    const server = createServer(apiKey!);
+    const server = createServer();
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("Torn MCP server running on stdio");
+    console.error("Torn MCP v2 server running on stdio");
   } else {
     const app = express();
     app.use(express.json());
@@ -61,7 +68,7 @@ async function main() {
 
     // Health check for Railway
     app.get("/health", (_req, res) => {
-      res.json({ status: "ok", tools: 57 });
+      res.json({ status: "ok", version: "2.0.0", tools: 25 });
     });
 
     // ── Legacy SSE endpoints ──
@@ -70,7 +77,7 @@ async function main() {
     app.get("/sse", async (req, res) => {
       console.log("New SSE connection");
       const transport = new SSEServerTransport("/messages", res);
-      const server = createServer(apiKey!);
+      const server = createServer();
 
       await server.connect(transport);
 
@@ -113,7 +120,7 @@ async function main() {
           sessionIdGenerator: () => randomUUID(),
         });
 
-        const server = createServer(apiKey!);
+        const server = createServer();
         await server.connect(transport);
 
         // Store session once initialized
@@ -154,9 +161,10 @@ async function main() {
 
     const port = parseInt(process.env.PORT || "3000", 10);
     app.listen(port, "0.0.0.0", () => {
-      console.log(`Torn MCP server running on http://0.0.0.0:${port}`);
+      console.log(`Torn MCP v2 server running on http://0.0.0.0:${port}`);
       console.log(`  Streamable HTTP: /mcp`);
       console.log(`  Legacy SSE:      /sse + /messages`);
+      console.log(`  Keys loaded:     ${keyManager.keyCount}`);
     });
   }
 }

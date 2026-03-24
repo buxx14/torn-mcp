@@ -1,7 +1,7 @@
 {
   "name": "torn-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for Torn.com - connects to Torn API and YATA",
+  "version": "2.0.0",
+  "description": "MCP server for Torn.com — Delta Engine with historical stats, faction sweeps, war reports",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

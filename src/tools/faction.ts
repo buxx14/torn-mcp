@@ -1,170 +1,176 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { tornFaction, tornFactionV2, tornUserV2 } from "../torn-api.js";
+import { KeyManager } from "../key-manager.js";
+import { tornFaction, tornApiFetch } from "../torn-api.js";
 
-export function registerFactionTools(server: McpServer, apiKey: string) {
+export function registerFactionTools(server: McpServer, keyManager: KeyManager) {
+
+  // ── Faction Basic ──
+
   server.tool(
     "get_faction_basic",
-    "Get basic faction info (name, tag, leader, co-leader, members, respect, age). Leave factionId empty for your own faction.",
+    "Get basic faction info (name, tag, leader, co-leader, members, respect, age, rank, ranked wars). Leave factionId empty for your own faction.",
     { factionId: z.string().optional().describe("Faction ID (omit for your own)") },
     async ({ factionId }) => {
-      const data = await tornFaction(apiKey, "basic", factionId);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      try {
+        const data = await tornFaction(keyManager, "basic", factionId);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
     }
   );
+
+  // ── Faction Members (lightweight) ──
+
+  server.tool(
+    "get_faction_members",
+    "Get ONLY the member list from a faction (lighter than full basic). Returns array of members with id, name, level, days_in_faction, position, last_action, status.",
+    { factionId: z.string().optional().describe("Faction ID (omit for your own)") },
+    async ({ factionId }) => {
+      try {
+        const data = await tornFaction(keyManager, "basic", factionId);
+        const members = data.members || {};
+        const memberList = Object.entries(members).map(([id, info]: [string, any]) => ({
+          id,
+          name: info.name,
+          level: info.level,
+          days_in_faction: info.days_in_faction,
+          position: info.position,
+          last_action: info.last_action,
+          status: info.status,
+        }));
+        return { content: [{ type: "text", text: JSON.stringify(memberList, null, 2) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── Ranked Wars ──
+
+  server.tool(
+    "get_faction_rankedwars",
+    "Get all ranked wars for a faction (current and historical). War IDs from this are used with get_ranked_war_report. An end time of 0 means the war is still active.",
+    { factionId: z.string().optional().describe("Faction ID (omit for your own)") },
+    async ({ factionId }) => {
+      try {
+        const data = await tornFaction(keyManager, "rankedwars", factionId);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── Chain ──
 
   server.tool(
     "get_faction_chain",
     "Get current chain status (current count, timeout, max, modifier).",
     { factionId: z.string().optional().describe("Faction ID (omit for your own)") },
     async ({ factionId }) => {
-      const data = await tornFaction(apiKey, "chain", factionId);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      try {
+        const data = await tornFaction(keyManager, "chain", factionId);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
     }
   );
 
-  server.tool(
-    "get_faction_chains",
-    "Get history of faction chains.",
-    { factionId: z.string().optional().describe("Faction ID (omit for your own)") },
-    async ({ factionId }) => {
-      const data = await tornFaction(apiKey, "chains", factionId);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
+  // ── Contributors ──
 
   server.tool(
-    "get_faction_wars",
-    "Get current ranked wars the faction is involved in.",
-    { factionId: z.string().optional().describe("Faction ID (omit for your own)") },
-    async ({ factionId }) => {
-      const data = await tornFaction(apiKey, "rankedwars", factionId);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
-
-  server.tool(
-    "get_faction_territory",
-    "Get faction territory data.",
-    { factionId: z.string().optional().describe("Faction ID (omit for your own)") },
-    async ({ factionId }) => {
-      const data = await tornFaction(apiKey, "territory", factionId);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
-
-  server.tool(
-    "get_faction_crimes",
-    "Get organized crime data for the faction (requires faction API access).",
-    { factionId: z.string().optional().describe("Faction ID (omit for your own)") },
-    async ({ factionId }) => {
-      const data = await tornFaction(apiKey, "crimes", factionId);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
-
-  server.tool(
-    "get_faction_attacks",
-    "Get recent faction attacks.",
+    "get_faction_contributors",
+    "Get faction contributors for a specific category (requires AA key for your own faction).",
     {
+      cat: z.string().describe("Category (e.g. 'money', 'respect', 'gym')"),
       factionId: z.string().optional().describe("Faction ID (omit for your own)"),
-      limit: z.string().optional().describe("Max attacks to return"),
     },
-    async ({ factionId, limit }) => {
-      const extra = limit ? { limit } : undefined;
-      const data = await tornFaction(apiKey, "attacks", factionId, extra);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    async ({ cat, factionId }) => {
+      try {
+        const extra: Record<string, string> = {};
+        if (cat) extra.stat = cat;
+        const data = await tornFaction(keyManager, "contributors", factionId, extra);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
     }
   );
+
+  // ── Faction Stats ──
 
   server.tool(
     "get_faction_stats",
     "Get faction stat summary (member count, best chain, respect, etc).",
     { factionId: z.string().optional().describe("Faction ID (omit for your own)") },
     async ({ factionId }) => {
-      const data = await tornFaction(apiKey, "stats", factionId);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      try {
+        const data = await tornFaction(keyManager, "stats", factionId);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
     }
   );
 
-  server.tool(
-    "get_faction_upgrades",
-    "Get faction upgrades (perks the faction has unlocked).",
-    { factionId: z.string().optional().describe("Faction ID (omit for your own)") },
-    async ({ factionId }) => {
-      const data = await tornFaction(apiKey, "upgrades", factionId);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
+  // ── Faction Attacks (with time filtering) ──
 
   server.tool(
-    "get_faction_contributors",
-    "Get faction contributors for various categories (requires AA of your faction).",
-    { factionId: z.string().optional().describe("Faction ID (omit for your own)") },
-    async ({ factionId }) => {
-      const data = await tornFaction(apiKey, "contributors", factionId);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
-
-  server.tool(
-    "get_faction_applications",
-    "Get pending faction applications (requires faction API access).",
-    {},
-    async () => {
-      const data = await tornFaction(apiKey, "applications");
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
-
-  server.tool(
-    "get_faction_armor_and_weapons",
-    "Get faction armory contents (weapons, armor, temporary items).",
-    {},
-    async () => {
-      const data = await tornFaction(apiKey, "weapons,armor,temporary,medical,boosters,drugs");
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
-
-  server.tool(
-    "get_faction_donations",
-    "Get faction donation data (requires faction API access).",
-    {},
-    async () => {
-      const data = await tornFaction(apiKey, "donations");
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
-
-  server.tool(
-    "get_faction_revives",
-    "Get recent faction revives.",
+    "get_faction_attacks",
+    "Get faction attack logs with time filtering. Requires AA key.",
     {
-      limit: z.string().optional().describe("Max revives to return"),
+      from: z.number().optional().describe("Unix timestamp — attacks after this time"),
+      to: z.number().optional().describe("Unix timestamp — attacks before this time"),
+      limit: z.number().optional().describe("Max results (default 100, max 100)"),
+      sort: z.enum(["asc", "desc"]).optional().describe("Sort order (default desc)"),
     },
-    async ({ limit }) => {
-      const extra = limit ? { limit } : undefined;
-      const data = await tornFaction(apiKey, "revives", undefined, extra);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    async ({ from, to, limit, sort }) => {
+      try {
+        const params: Record<string, string | number | undefined> = {};
+        if (from) params.from = from;
+        if (to) params.to = to;
+        if (limit) params.limit = limit;
+        if (sort) params.sort = sort;
+
+        const data = await tornApiFetch(keyManager, "/faction/attacks", params);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
     }
   );
+
+  // ── Faction Attacks Full (higher limit, less detail) ──
 
   server.tool(
-    "get_faction_news",
-    "Get faction news feed (main news, armory, funds, attack, member, territory news).",
+    "get_faction_attacksfull",
+    "Get simplified faction attack logs with higher limit (up to 1000). Less detail per entry than get_faction_attacks.",
     {
-      newsType: z.enum(["mainnews", "armorynews", "fundsnews", "attacknews", "membershipnews", "territorynews"]).describe("Type of news"),
-      limit: z.string().optional().describe("Max news entries to return"),
+      from: z.number().optional().describe("Unix timestamp — attacks after this time"),
+      to: z.number().optional().describe("Unix timestamp — attacks before this time"),
+      limit: z.number().optional().describe("Max results (default 1000, max 1000)"),
+      sort: z.enum(["asc", "desc"]).optional().describe("Sort order (default desc)"),
     },
-    async ({ newsType, limit }) => {
-      const extra = limit ? { limit } : undefined;
-      const data = await tornFaction(apiKey, newsType, undefined, extra);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    async ({ from, to, limit, sort }) => {
+      try {
+        const params: Record<string, string | number | undefined> = {};
+        if (from) params.from = from;
+        if (to) params.to = to;
+        if (limit) params.limit = limit;
+        if (sort) params.sort = sort;
+
+        const data = await tornApiFetch(keyManager, "/faction/attacksfull", params);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
     }
   );
 
-  // ── OC 2.0 tools (v2 API) ──
+  // ── OC 2.0 (kept as-is, using v2 API) ──
 
   server.tool(
     "get_faction_crimes_v2",
@@ -174,20 +180,120 @@ export function registerFactionTools(server: McpServer, apiKey: string) {
       offset: z.string().optional().describe("Pagination offset (default 0)"),
     },
     async ({ cat, offset }) => {
-      const params: Record<string, string> = { cat };
-      if (offset) params.offset = offset;
-      const data = await tornFactionV2(apiKey, "crimes", params);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      try {
+        const params: Record<string, string> = { cat };
+        if (offset) params.offset = offset;
+        const data = await tornApiFetch(keyManager, "/faction/crimes", params);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
     }
   );
 
   server.tool(
     "get_user_organized_crimes_v2",
-    "Get OC 2.0 scenarios with Recruiting status and empty slots available to join. Uses v2 user endpoint with Minimal access key.",
+    "Get OC 2.0 scenarios with Recruiting status and empty slots available to join. Uses v2 user endpoint.",
     {},
     async () => {
-      const data = await tornUserV2(apiKey, "organizedcrimes");
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      try {
+        const data = await tornApiFetch(keyManager, "/user", { selections: "organizedcrimes" });
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // ── Faction Stats Sweep — added in Phase 5 (see below in this file) ──
+  // The get_faction_stats_sweep tool is registered at the bottom of this function.
+
+  server.tool(
+    "get_faction_stats_sweep",
+    "Iterate over ALL members of a faction and pull specific stats (current + historical) to compute deltas. This is the faction-wide activity report tool. Takes 1-3 minutes depending on faction size and number of API keys. Max 10 stat names.",
+    {
+      factionId: z.string().optional().describe("Faction ID (omit for your own)"),
+      stats: z.string().describe("Comma-separated stat names, max 10 (e.g. 'xantaken,attackswon,refills,itemsdumped,missionscompleted')"),
+      days_ago: z.number().optional().describe("Days back to compare (default 30)"),
+      timestamp_from: z.number().optional().describe("Explicit start Unix timestamp (overrides days_ago)"),
+    },
+    async ({ factionId, stats, days_ago, timestamp_from }) => {
+      try {
+        const daysAgo = days_ago ?? 30;
+        const fromTs = timestamp_from ?? Math.floor(Date.now() / 1000) - (daysAgo * 86400);
+        const statList = stats.split(",").map((s) => s.trim()).slice(0, 10).join(",");
+        const statNames = statList.split(",");
+
+        // Step 1: Get roster
+        const faction = await tornFaction(keyManager, "basic", factionId);
+        const members = faction.members || {};
+        const memberIds = Object.keys(members);
+
+        const results: any[] = [];
+        const errors: string[] = [];
+        let apiCalls = 1; // roster call
+
+        // Step 2: Loop through every member
+        for (let i = 0; i < memberIds.length; i++) {
+          const pid = memberIds[i];
+          const member = members[pid];
+
+          try {
+            // Historical snapshot
+            const historical = await tornApiFetch(keyManager, `/user/${pid}/personalstats`, {
+              stat: statList,
+              timestamp: fromTs,
+            });
+            apiCalls++;
+
+            // Current snapshot
+            const current = await tornApiFetch(keyManager, `/user/${pid}/personalstats`, {
+              stat: statList,
+            });
+            apiCalls++;
+
+            // Compute deltas
+            const deltas: Record<string, any> = {};
+            for (const statName of statNames) {
+              const fromVal = historical?.personalstats?.[statName] ?? null;
+              const toVal = current?.personalstats?.[statName] ?? null;
+              const delta = fromVal !== null && toVal !== null ? toVal - fromVal : null;
+              deltas[statName] = {
+                from: fromVal,
+                to: toVal,
+                delta,
+                per_day: delta !== null ? Math.round((delta / daysAgo) * 100) / 100 : null,
+              };
+            }
+
+            results.push({
+              id: pid,
+              name: member.name,
+              level: member.level,
+              days_in_faction: member.days_in_faction,
+              stats: deltas,
+            });
+          } catch (err: any) {
+            errors.push(`${member.name} [${pid}]: ${err.message}`);
+          }
+        }
+
+        const result = {
+          faction_id: faction.ID || factionId || "own",
+          faction_name: faction.name,
+          member_count: memberIds.length,
+          period_days: daysAgo,
+          from_timestamp: fromTs,
+          members: results,
+          processed: results.length,
+          api_calls_made: apiCalls,
+          errors,
+        };
+
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+      }
     }
   );
 }
