@@ -14,7 +14,7 @@ export function registerWarTools(server: McpServer, keyManager: KeyManager, torn
     { warId: z.string().describe("Ranked war ID (from get_faction_rankedwars)") },
     async ({ warId }) => {
       try {
-        const data = await tornApiV1Call(keyManager, "faction", "rankedwarreport", warId);
+        const data = await tornApiV1Call(keyManager, "torn", "rankedwarreport", warId);
         return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
@@ -55,7 +55,7 @@ export function registerWarTools(server: McpServer, keyManager: KeyManager, torn
 
         for (const war of warEntries) {
           try {
-            const report = await tornApiV1Call(keyManager, "faction", "rankedwarreport", war.id);
+            const report = await tornApiV1Call(keyManager, "torn", "rankedwarreport", war.id);
             reports.push({ war_id: war.id, ...report });
           } catch (err: any) {
             errors.push(`War ${war.id}: ${err.message}`);
